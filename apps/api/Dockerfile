@@ -22,7 +22,8 @@ RUN pnpm --filter @rentix/shared build \
  && cp -r apps/api/dist /out/ \
  && cd /out && rm -rf src test eslint.config.mjs Dockerfile nest-cli.json tsconfig*.json \
  # Descarrega já o motor de migrações, para o contentor não precisar de internet ao arrancar.
- && ./node_modules/.bin/prisma version
+ && ls /out/node_modules | head -50 \
+ && node /out/node_modules/prisma/build/index.js version
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
@@ -34,4 +35,4 @@ RUN mkdir -p /app/storage && chown rentix:rentix /app/storage
 USER rentix
 EXPOSE 4000
 # As migrações correm antes de arrancar (prisma migrate deploy é idempotente).
-CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node dist/main.js"]
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node dist/main.js"]

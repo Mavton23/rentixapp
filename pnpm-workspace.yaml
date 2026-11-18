@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - "@nestjs/core"
+  - bcrypt
+  - prisma
+  - esbuild

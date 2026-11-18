@@ -1,0 +1,686 @@
+// Rentix — schema principal.
+// Convenções:
+//  - Dinheiro em centavos (Int). Ex.: 1 500,00 MT = 150000.
+//  - Datas de calendário (vencimento, início de contrato) em colunas DATE.
+//  - Tudo o que pertence a um cliente tem organizationId (multi-tenant).
+//  - Tabelas em snake_case, campos em camelCase.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==================== ENUMS ====================
+
+enum PlatformRole {
+  USER
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum MemberRole {
+  OWNER
+  MANAGER
+  ACCOUNTANT
+  VIEWER
+}
+
+enum Currency {
+  MZN
+  USD
+  ZAR
+  EUR
+}
+
+enum PropertyType {
+  HOUSE
+  APARTMENT_BUILDING
+  APARTMENT
+  COMMERCIAL
+  OFFICE
+  WAREHOUSE
+  LAND
+  OTHER
+}
+
+enum UnitStatus {
+  AVAILABLE
+  OCCUPIED
+  MAINTENANCE
+  UNAVAILABLE
+}
+
+enum IdDocumentType {
+  BI
+  PASSPORT
+  DIRE
+  DRIVING_LICENSE
+  OTHER
+}
+
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+  UNION
+}
+
+enum TenantAccountStatus {
+  ACTIVE
+  BLOCKED
+}
+
+enum LeaseStatus {
+  DRAFT
+  ACTIVE
+  ENDED
+  TERMINATED
+}
+
+enum InvoiceKind {
+  RENT
+  DEPOSIT
+  LATE_FEE
+  OTHER
+}
+
+enum InvoiceStatus {
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MPESA
+  EMOLA
+  MKESH
+  CARD
+  CHEQUE
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REVERSED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum SubjectType {
+  USER
+  TENANT
+  SYSTEM
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+// ==================== CONTAS E ORGANIZAÇÕES ====================
+
+/// Utilizador da equipa (proprietário, gestor, contabilista) ou administrador da plataforma.
+model User {
+  id              String       @id @default(uuid()) @db.Uuid
+  name            String
+  email           String       @unique
+  phone           String?      @unique
+  passwordHash    String
+  platformRole    PlatformRole @default(USER)
+  status          UserStatus   @default(ACTIVE)
+  avatarUrl       String?
+  emailVerifiedAt DateTime?
+  /// Idioma da interface e dos emails: pt | en. Null = idioma da organização.
+  locale          String?
+  lastLoginAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  memberships      Membership[]
+  recordedPayments Payment[]    @relation("PaymentRecordedBy")
+
+  @@map("users")
+}
+
+/// Cliente da plataforma: um proprietário individual ou uma imobiliária.
+model Organization {
+  id                        String             @id @default(uuid()) @db.Uuid
+  name                      String
+  slug                      String             @unique
+  nuit                      String?
+  email                     String?
+  phone                     String?
+  address                   String?
+  city                      String?
+  province                  String?
+  country                   String             @default("MZ") @db.Char(2)
+  defaultCurrency           Currency           @default(MZN)
+  timezone                  String             @default("Africa/Maputo")
+  /// Idioma por omissão da organização (pt | en): inquilinos e emails sem idioma próprio.
+  locale                    String             @default("pt")
+  logoUrl                   String?
+  /// Dia do mês em que a renda vence, por omissão (1–28).
+  defaultBillingDay         Int                @default(5)
+  /// Multa por atraso em pontos-base (300 = 3%). Aplicada uma vez por fatura.
+  lateFeeBps                Int                @default(0)
+  /// Dias de tolerância depois do vencimento antes de aplicar a multa.
+  gracePeriodDays           Int                @default(5)
+  /// Quantos dias antes do vencimento enviar lembrete.
+  reminderDaysBefore        Int                @default(3)
+  /// Modelo do contrato de arrendamento (Markdown simples com {{variáveis}}). Nulo = modelo base.
+  contractTemplate          String?
+  contractTemplateUpdatedAt DateTime?
+  /// Suspensa pela administração do Rentix (abuso, fraude...): a equipa deixa de poder trabalhar.
+  status                    OrganizationStatus @default(ACTIVE)
+  suspendedAt               DateTime?
+  suspendedReason           String?
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+
+  memberships          Membership[]
+  memberInvites        MemberInvite[]
+  subscriptionInvoices SubscriptionInvoice[]
+  subscriptionPayments SubscriptionPayment[]
+  files                StoredFile[]
+  properties           Property[]
+  units                Unit[]
+  tenants              Tenant[]
+  leases               Lease[]
+  invoices             Invoice[]
+  payments             Payment[]
+  notifications        Notification[]
+  subscription         Subscription?
+  counters             DocumentCounter[]
+  gateways             PaymentGatewayConfig[]
+
+  @@map("organizations")
+}
+
+model Membership {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  userId         String     @db.Uuid
+  role           MemberRole
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+// ==================== IMÓVEIS ====================
+
+model Property {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  type           PropertyType
+  street         String
+  neighbourhood  String?
+  city           String
+  province       String?
+  country        String       @default("MZ") @db.Char(2)
+  description    String?
+  archivedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  units        Unit[]
+
+  @@index([organizationId, archivedAt])
+  @@map("properties")
+}
+
+/// Espaço arrendável. Uma casa tem 1 unidade; um prédio tem várias (Flat 1A, Loja 2...).
+model Unit {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  propertyId     String     @db.Uuid
+  label          String
+  bedrooms       Int?
+  bathrooms      Int?
+  areaM2         Int?
+  floor          String?
+  /// Renda de referência (centavos). O valor efetivo fica no contrato.
+  rentAmount     Int?
+  status         UnitStatus @default(AVAILABLE)
+  notes          String?
+  archivedAt     DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property     Property     @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  leases       Lease[]
+
+  @@unique([propertyId, label])
+  @@index([organizationId, status])
+  @@map("units")
+}
+
+// ==================== INQUILINOS ====================
+
+/// Ficha do inquilino dentro de uma organização. A mesma pessoa pode ser inquilina de
+/// várias organizações: cada uma tem a sua ficha, ligadas pela mesma TenantAccount.
+model Tenant {
+  id                    String         @id @default(uuid()) @db.Uuid
+  organizationId        String         @db.Uuid
+  accountId             String?        @db.Uuid
+  fullName              String
+  email                 String?
+  phone                 String
+  /// Idioma do inquilino (pt | en) para SMS, emails, portal e recibos. Null = idioma da organização.
+  locale                String?
+  idDocumentType        IdDocumentType
+  idDocumentNumber      String
+  nuit                  String?
+  birthDate             DateTime?      @db.Date
+  maritalStatus         MaritalStatus?
+  occupation            String?
+  employer              String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  notes                 String?
+  archivedAt            DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account      TenantAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  leases       Lease[]
+  invoices     Invoice[]
+  payments     Payment[]
+  invites      TenantInvite[]
+
+  @@unique([organizationId, idDocumentType, idDocumentNumber])
+  @@index([organizationId, fullName])
+  @@index([accountId])
+  @@map("tenants")
+}
+
+/// Conta de acesso ao portal do inquilino (uma por pessoa, em toda a plataforma).
+model TenantAccount {
+  id           String              @id @default(uuid()) @db.Uuid
+  email        String?             @unique
+  phone        String?             @unique
+  passwordHash String
+  status       TenantAccountStatus @default(ACTIVE)
+  lastLoginAt  DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  tenants Tenant[]
+
+  @@map("tenant_accounts")
+}
+
+model TenantInvite {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("tenant_invites")
+}
+
+// ==================== CONTRATOS E FATURAÇÃO ====================
+
+/// Contrato de arrendamento. Só pode existir um contrato ACTIVE por unidade
+/// (índice parcial criado na migração: leases_one_active_per_unit).
+model Lease {
+  id                 String      @id @default(uuid()) @db.Uuid
+  organizationId     String      @db.Uuid
+  unitId             String      @db.Uuid
+  tenantId           String      @db.Uuid
+  status             LeaseStatus @default(DRAFT)
+  startDate          DateTime    @db.Date
+  endDate            DateTime?   @db.Date
+  terminatedAt       DateTime?   @db.Date
+  terminationReason  String?
+  rentAmount         Int
+  currency           Currency    @default(MZN)
+  billingDay         Int
+  /// Primeiro período "AAAA-MM" a faturar. Contratos registados com data de início no passado
+  /// não geram faturas retroativas (só a partir do mês em que foram registados).
+  firstBillingPeriod String
+  depositAmount      Int         @default(0)
+  /// Sobrepõe a multa da organização (null = usar a da organização).
+  lateFeeBps         Int?
+  gracePeriodDays    Int?
+  notes              String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  unit         Unit         @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoices     Invoice[]
+
+  @@index([organizationId, status])
+  @@index([tenantId])
+  @@index([unitId])
+  @@map("leases")
+}
+
+model Invoice {
+  id              String        @id @default(uuid()) @db.Uuid
+  organizationId  String        @db.Uuid
+  leaseId         String        @db.Uuid
+  tenantId        String        @db.Uuid
+  /// Número legível e sequencial por organização e ano: "FT 2026/000123".
+  number          String
+  kind            InvoiceKind
+  status          InvoiceStatus @default(OPEN)
+  /// Período de referência "AAAA-MM" (só para rendas).
+  period          String?
+  description     String
+  issueDate       DateTime      @db.Date
+  dueDate         DateTime      @db.Date
+  amount          Int
+  paidAmount      Int           @default(0)
+  currency        Currency
+  /// Para multas: a fatura que originou a multa (uma multa por fatura).
+  parentInvoiceId String?       @unique @db.Uuid
+  voidedAt        DateTime?
+  voidReason      String?
+  lastReminderAt  DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lease         Lease        @relation(fields: [leaseId], references: [id], onDelete: Restrict)
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  parentInvoice Invoice?     @relation("LateFee", fields: [parentInvoiceId], references: [id], onDelete: Restrict)
+  lateFee       Invoice?     @relation("LateFee")
+  payments      Payment[]
+
+  @@unique([organizationId, number])
+  /// Garante uma só fatura de renda por contrato e período, mesmo com o job a correr duas vezes.
+  @@unique([leaseId, kind, period])
+  @@index([organizationId, status, dueDate])
+  @@index([tenantId])
+  @@map("invoices")
+}
+
+model Payment {
+  id                    String        @id @default(uuid()) @db.Uuid
+  organizationId        String        @db.Uuid
+  invoiceId             String        @db.Uuid
+  tenantId              String        @db.Uuid
+  amount                Int
+  currency              Currency
+  method                PaymentMethod
+  status                PaymentStatus @default(CONFIRMED)
+  paidAt                DateTime      @db.Date
+  reference             String?
+  notes                 String?
+  /// Número do recibo, atribuído quando o pagamento é confirmado: "RC 2026/000045".
+  receiptNumber         String?
+  /// Para pagamentos móveis (M-Pesa, e-Mola...).
+  provider              String?
+  providerTransactionId String?
+  /// Referência enviada ao fornecedor (ThirdPartyReference no M-Pesa).
+  providerReference     String?
+  /// Telemóvel que paga (pagamentos móveis).
+  payerPhone            String?
+  /// Quem iniciou: a equipa (registo manual / pedido) ou o inquilino no portal.
+  initiatedBy           SubjectType?
+  /// Prazo para o cliente confirmar no telemóvel; depois disso o pedido é dado como falhado.
+  expiresAt             DateTime?
+  failureReason         String?
+  /// Chave enviada pelo cliente para que um pedido repetido não duplique o pagamento.
+  idempotencyKey        String?
+  recordedById          String?       @db.Uuid
+  reversedAt            DateTime?
+  reversalReason        String?
+  reversedById          String?       @db.Uuid
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice      Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  recordedBy   User?        @relation("PaymentRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, receiptNumber])
+  @@unique([organizationId, idempotencyKey])
+  @@unique([provider, providerTransactionId])
+  @@unique([organizationId, providerReference])
+  @@index([organizationId, paidAt])
+  @@index([invoiceId])
+  @@index([tenantId])
+  @@index([status, expiresAt])
+  @@map("payments")
+}
+
+/// Contadores para numeração sequencial sem buracos (faturas, recibos) por organização.
+model DocumentCounter {
+  organizationId String @db.Uuid
+  key            String
+  value          Int    @default(0)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, key])
+  @@map("document_counters")
+}
+
+// ==================== NOTIFICAÇÕES, AUDITORIA, SESSÕES ====================
+
+/// Caixa de saída (outbox): cada notificação é gravada aqui e enviada por um worker,
+/// com tentativas repetidas. dedupeKey impede lembretes duplicados.
+model Notification {
+  id                String              @id @default(uuid()) @db.Uuid
+  organizationId    String?             @db.Uuid
+  tenantId          String?             @db.Uuid
+  userId            String?             @db.Uuid
+  channel           NotificationChannel
+  template          String
+  recipient         String
+  subject           String?
+  body              String
+  status            NotificationStatus  @default(QUEUED)
+  attempts          Int                 @default(0)
+  lastError         String?
+  dedupeKey         String?             @unique
+  scheduledAt       DateTime            @default(now())
+  sentAt            DateTime?
+  providerMessageId String?
+  createdAt         DateTime            @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledAt])
+  @@index([organizationId, createdAt])
+  @@index([tenantId])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String?     @db.Uuid
+  actorType      SubjectType
+  actorId        String?     @db.Uuid
+  action         String
+  entityType     String
+  entityId       String?     @db.Uuid
+  metadata       Json?
+  ip             String?
+  userAgent      String?
+  createdAt      DateTime    @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+  @@index([actorType, actorId])
+  @@map("audit_logs")
+}
+
+/// Sessão de refresh token (rotativo). Guarda-se só o hash do token.
+model Session {
+  id             String      @id @default(uuid()) @db.Uuid
+  subjectType    SubjectType
+  subjectId      String      @db.Uuid
+  /// Organização ativa (só para utilizadores da equipa).
+  organizationId String?     @db.Uuid
+  tokenHash      String      @unique
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  replacedById   String?     @db.Uuid
+  userAgent      String?
+  ip             String?
+  createdAt      DateTime    @default(now())
+  lastUsedAt     DateTime?
+
+  @@index([subjectType, subjectId])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id          String      @id @default(uuid()) @db.Uuid
+  subjectType SubjectType
+  subjectId   String      @db.Uuid
+  tokenHash   String      @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime    @default(now())
+
+  @@index([subjectType, subjectId])
+  @@map("password_reset_tokens")
+}
+
+// ==================== PLANOS (SaaS) ====================
+
+model Plan {
+  id           String   @id @default(uuid()) @db.Uuid
+  code         String   @unique
+  name         String
+  description  String?
+  monthlyPrice Int
+  annualPrice  Int
+  currency     Currency @default(MZN)
+  /// null = ilimitado
+  maxUnits     Int?
+  maxTenants   Int?
+  maxMembers   Int?
+  /// Espaço para ficheiros (MB). Nulo = sem limite.
+  maxStorageMb Int?
+  features     Json     @default("{}")
+  isActive     Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions          Subscription[]        @relation("SubscriptionPlan")
+  scheduledSubscriptions Subscription[]        @relation("SubscriptionScheduledPlan")
+  subscriptionInvoices   SubscriptionInvoice[]
+
+  @@map("plans")
+}
+
+/// Uma por organização. O plano Grátis não tem período (currentPeriodStart/End nulos).
+model Subscription {
+  id                 String             @id @default(uuid()) @db.Uuid
+  organizationId     String             @unique @db.Uuid
+  planId             String             @db.Uuid
+  status             SubscriptionStatus @default(TRIALING)
+  billingCycle       BillingCycle       @default(MONTHLY)
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  /// Valor do período atual (preço do plano), para calcular o crédito ao mudar de plano a meio.
+  periodValue        Int                @default(0)
+  /// No fim do período passa para o Grátis.
+  cancelAtPeriodEnd  Boolean            @default(false)
+  /// Mudança para um plano mais barato, aplicada no fim do período.
+  scheduledPlanId    String?            @db.Uuid
+  scheduledCycle     BillingCycle?
+  pastDueSince       DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan          Plan         @relation("SubscriptionPlan", fields: [planId], references: [id], onDelete: Restrict)
+  scheduledPlan Plan?        @relation("SubscriptionScheduledPlan", fields: [scheduledPlanId], references: [id], onDelete: SetNull)
+
+  @@index([status, currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+// ==================== PAGAMENTOS MÓVEIS ====================
+
+enum PaymentGateway {
+  /// Simulador para desenvolvimento e demonstrações (nunca movimenta dinheiro).
+  SIMULATOR
+  /// Vodacom M-Pesa Open API (developer.mpesa.vm.co.mz).
+  MPESA_VODACOM
+}
+
+/// Ligação de uma organização a um fornecedor de pagamentos. O dinheiro entra diretamente
+/// na conta do senhorio (o Rentix nunca o retém). As credenciais são guardadas cifradas.
+model PaymentGatewayConfig {
+  id                   String          @id @default(uuid()) @db.Uuid
+  organizationId       String          @db.Uuid
+  gateway              PaymentGateway
+  /// Métodos que este fornecedor cobre (ex.: [MPESA]).
+  methods              PaymentMethod[]
+  enabled              Boolean         @default(false)
+  /// JSON cifrado com AES-256-GCM (chave PAYMENT_CREDENTIALS_KEY).
+  credentialsEncrypted String?
+  /// Parte não secreta para mostrar no ecrã (ex.: código de serviço, ambiente).
+  publicInfo           Json            @default("{}")
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, gateway])
+  @@map("payment_gateway_configs")
+}

@@ -1,0 +1,53 @@
+# Pilha completa em contentores (base de dados, API e frontend), para testar como em produção.
+#   cp apps/api/.env.example .env.prod   # e preencher os segredos
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# Depois: http://localhost:3000. Os planos base são criados pelas migrações.
+# Promover um administrador da plataforma (depois de criar a conta no site):
+#   docker compose -f docker-compose.prod.yml exec api node dist/cli/promote-admin.js pessoa@exemplo.co.mz
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rentix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rentix}
+      POSTGRES_DB: rentix
+    volumes:
+      - pgdata-prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U rentix']
+      interval: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://rentix:${POSTGRES_PASSWORD:-rentix}@postgres:5432/rentix
+      WEB_URL: ${WEB_URL:-http://localhost:3000}
+    volumes:
+      # Ficheiros enviados (com STORAGE_DRIVER=local). Com S3, não é preciso.
+      - uploads-prod:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        API_URL: http://api:4000
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+
+volumes:
+  pgdata-prod:
+  uploads-prod:

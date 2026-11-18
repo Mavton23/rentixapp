@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/bricolage-grotesque';
+@import '@fontsource-variable/instrument-sans';
+
+/*
+ * Tokens do Rentix.
+ * Azul-marinho, azul e turquesa vêm da identidade visual (docs/marca). Verde = pago, âmbar = a vencer / parcial,
+ * vermelho = em atraso. Valores monetários usam a fonte de títulos com algarismos tabulares.
+ */
+@theme {
+  --font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque Variable', 'Instrument Sans Variable', ui-sans-serif, sans-serif;
+
+  --color-ink: #0f1e2e;
+  --color-ink-soft: #4a5868;
+  --color-ink-faint: #7b8794;
+  --color-paper: #f5f7fa;
+  --color-surface: #ffffff;
+  --color-line: #e2e7ee;
+  --color-line-strong: #cbd3dd;
+
+  --color-brand: #1d5fe6;
+  --color-brand-strong: #1747c4;
+  --color-brand-soft: #e8f0fd;
+  --color-accent: #16c6c0;
+
+  --color-navy: #0f2a44;
+  --color-navy-2: #183a5c;
+  --color-navy-text: #b9c6d6;
+
+  --color-paid: #0f7a5c;
+  --color-paid-soft: #e3f4ee;
+  --color-due: #a15c07;
+  --color-due-soft: #fdf3e1;
+  --color-overdue: #c0263e;
+  --color-overdue-soft: #fce9ec;
+
+  --radius-control: 6px;
+  --radius-panel: 10px;
+}
+
+@layer base {
+  html {
+    color: var(--color-ink);
+    background: var(--color-paper);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+    font-weight: 650;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility money {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  white-space: nowrap;
+}

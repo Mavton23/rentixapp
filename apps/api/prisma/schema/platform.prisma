@@ -1,0 +1,105 @@
+// ==================== PLATAFORMA: FATURAÇÃO DAS SUBSCRIÇÕES E CONVITES ====================
+
+enum SubscriptionInvoiceStatus {
+  OPEN
+  PAID
+  VOID
+}
+
+enum SubscriptionInvoiceKind {
+  /// Mudança de plano (ou primeira compra): o período começa quando é paga.
+  CHANGE
+  /// Renovação: o período continua a partir do fim do anterior.
+  RENEWAL
+}
+
+/// Faturas do Rentix às organizações (numeração própria da plataforma: "RTX 2026/000001").
+model SubscriptionInvoice {
+  id               String                    @id @default(uuid()) @db.Uuid
+  number           String                    @unique
+  organizationId   String                    @db.Uuid
+  planId           String                    @db.Uuid
+  billingCycle     BillingCycle
+  kind             SubscriptionInvoiceKind
+  status           SubscriptionInvoiceStatus @default(OPEN)
+  /// Preço do plano para o ciclo.
+  planAmount       Int
+  /// Crédito pelo tempo não usado do plano anterior.
+  credit           Int                       @default(0)
+  /// A pagar = planAmount - credit.
+  amount           Int
+  currency         Currency                  @default(MZN)
+  /// Só para renovações: início do período que a fatura paga.
+  periodStart      DateTime?
+  dueDate          DateTime
+  paidAt           DateTime?
+  paymentMethod    PaymentMethod?
+  paymentReference String?
+  voidedAt         DateTime?
+  voidReason       String?
+  createdById      String?                   @db.Uuid
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan                  @relation(fields: [planId], references: [id], onDelete: Restrict)
+  payments     SubscriptionPayment[]
+
+  @@index([organizationId, createdAt])
+  @@index([status, dueDate])
+  @@map("subscription_invoices")
+}
+
+/// Tentativas de pagamento móvel de uma fatura de subscrição (para a conta do Rentix).
+model SubscriptionPayment {
+  id                    String         @id @default(uuid()) @db.Uuid
+  invoiceId             String         @db.Uuid
+  organizationId        String         @db.Uuid
+  amount                Int
+  method                PaymentMethod
+  status                PaymentStatus  @default(PENDING)
+  gateway               PaymentGateway
+  providerReference     String         @unique
+  providerTransactionId String?
+  payerPhone            String
+  failureReason         String?
+  expiresAt             DateTime?
+  initiatedById         String         @db.Uuid
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  invoice      SubscriptionInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@index([status, expiresAt])
+  @@map("subscription_payments")
+}
+
+/// Contadores globais da plataforma (numeração das faturas do Rentix).
+model PlatformCounter {
+  key   String @id
+  value Int    @default(0)
+
+  @@map("platform_counters")
+}
+
+/// Convite para entrar na equipa de uma organização (para quem ainda não tem conta).
+model MemberInvite {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  email          String
+  role           MemberRole
+  tokenHash      String     @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  invitedById    String?    @db.Uuid
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("member_invites")
+}

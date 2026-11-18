@@ -1,0 +1,302 @@
+// Funcionalidades extra. Ficam desligadas por omissão e ligam-se com FEATURES=... no .env.
+// BLOG, CMS (conteúdo do site e contactos), TESTIMONIALS, STATUS_PAGE, MARKETPLACE.
+
+// ==================== BLOG ====================
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model BlogCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  posts BlogPost[]
+
+  @@map("blog_categories")
+}
+
+model BlogPost {
+  id              String     @id @default(uuid()) @db.Uuid
+  title           String
+  slug            String     @unique
+  excerpt         String
+  /// Markdown.
+  content         String
+  coverImageUrl   String?
+  status          PostStatus @default(DRAFT)
+  featured        Boolean    @default(false)
+  readTimeMinutes Int        @default(1)
+  seoTitle        String?
+  seoDescription  String?
+  publishedAt     DateTime?
+  categoryId      String?    @db.Uuid
+  authorId        String?    @db.Uuid
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  category BlogCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([status, publishedAt])
+  @@map("blog_posts")
+}
+
+// ==================== CONTEÚDO DO SITE (CMS) ====================
+
+/// Blocos de conteúdo editáveis do site público, identificados por chave
+/// ("about", "contact", "features"). O formato de cada chave é validado na API.
+model SiteContent {
+  key         String   @id
+  data        Json
+  updatedById String?  @db.Uuid
+  updatedAt   DateTime @updatedAt
+
+  @@map("site_contents")
+}
+
+enum ContactMessageStatus {
+  NEW
+  READ
+  ARCHIVED
+}
+
+model ContactMessage {
+  id        String               @id @default(uuid()) @db.Uuid
+  name      String
+  email     String
+  phone     String?
+  subject   String
+  message   String
+  status    ContactMessageStatus @default(NEW)
+  ip        String?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@index([status, createdAt])
+  @@map("contact_messages")
+}
+
+// ==================== TESTEMUNHOS ====================
+
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Testemunho deixado por um cliente (utilizador da equipa); só aparece depois de aprovado.
+model Testimonial {
+  id             String           @id @default(uuid()) @db.Uuid
+  userId         String           @unique @db.Uuid
+  organizationId String?          @db.Uuid
+  name           String
+  role           String?
+  city           String?
+  rating         Int
+  message        String
+  status         ModerationStatus @default(PENDING)
+  reviewedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([status, createdAt])
+  @@map("testimonials")
+}
+
+// ==================== ESTADO DO SISTEMA ====================
+
+enum ComponentStatus {
+  OPERATIONAL
+  DEGRADED
+  PARTIAL_OUTAGE
+  MAJOR_OUTAGE
+}
+
+enum IncidentStatus {
+  INVESTIGATING
+  IDENTIFIED
+  MONITORING
+  RESOLVED
+}
+
+enum IncidentImpact {
+  NONE
+  MINOR
+  MAJOR
+  CRITICAL
+}
+
+model StatusComponent {
+  id          String          @id @default(uuid()) @db.Uuid
+  name        String          @unique
+  description String?
+  status      ComponentStatus @default(OPERATIONAL)
+  sortOrder   Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  incidents Incident[]
+
+  @@map("status_components")
+}
+
+model Incident {
+  id         String         @id @default(uuid()) @db.Uuid
+  title      String
+  impact     IncidentImpact @default(MINOR)
+  status     IncidentStatus @default(INVESTIGATING)
+  startedAt  DateTime       @default(now())
+  resolvedAt DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  components StatusComponent[]
+  updates    IncidentUpdate[]
+
+  @@index([status, startedAt])
+  @@map("incidents")
+}
+
+model IncidentUpdate {
+  id         String         @id @default(uuid()) @db.Uuid
+  incidentId String         @db.Uuid
+  status     IncidentStatus
+  message    String
+  createdAt  DateTime       @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, createdAt])
+  @@map("incident_updates")
+}
+
+// ==================== MARKETPLACE (entre gestores) ====================
+
+enum ListingStatus {
+  PENDING_REVIEW
+  ACTIVE
+  REJECTED
+  EXPIRED
+  CLOSED
+}
+
+enum ListingPurpose {
+  RENT
+  SALE
+  MANAGEMENT
+}
+
+enum InterestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum ReportReason {
+  SPAM
+  INAPPROPRIATE
+  FALSE_INFO
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+}
+
+/// Anúncio de uma organização para outras organizações (ex.: imóvel para arrendar a clientes de outra imobiliária).
+model Listing {
+  id              String         @id @default(uuid()) @db.Uuid
+  organizationId  String         @db.Uuid
+  createdById     String?        @db.Uuid
+  title           String
+  description     String
+  purpose         ListingPurpose
+  propertyType    PropertyType
+  /// Centavos.
+  price           Int
+  currency        Currency       @default(MZN)
+  priceNegotiable Boolean        @default(false)
+  neighbourhood   String?
+  city            String
+  province        String?
+  bedrooms        Int?
+  bathrooms       Int?
+  areaM2          Int?
+  imageUrls       String[]       @default([])
+  status          ListingStatus  @default(PENDING_REVIEW)
+  rejectionReason String?
+  publishedAt     DateTime?
+  expiresAt       DateTime
+  viewsCount      Int            @default(0)
+  interestsCount  Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  interests ListingInterest[]
+  reports   ListingReport[]
+  views     ListingView[]
+
+  @@index([status, expiresAt])
+  @@index([organizationId])
+  @@index([city])
+  @@map("listings")
+}
+
+model ListingInterest {
+  id             String         @id @default(uuid()) @db.Uuid
+  listingId      String         @db.Uuid
+  organizationId String         @db.Uuid
+  userId         String         @db.Uuid
+  message        String?
+  status         InterestStatus @default(PENDING)
+  respondedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, organizationId])
+  @@index([organizationId])
+  @@map("listing_interests")
+}
+
+model ListingReport {
+  id             String       @id @default(uuid()) @db.Uuid
+  listingId      String       @db.Uuid
+  reporterId     String       @db.Uuid
+  organizationId String       @db.Uuid
+  reason         ReportReason
+  description    String?
+  status         ReportStatus @default(OPEN)
+  reviewedById   String?      @db.Uuid
+  reviewedAt     DateTime?
+  adminNotes     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, organizationId])
+  @@index([status, createdAt])
+  @@map("listing_reports")
+}
+
+/// Uma visualização por organização (para a contagem não ser inflacionada).
+model ListingView {
+  listingId      String   @db.Uuid
+  organizationId String   @db.Uuid
+  viewedAt       DateTime @default(now())
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@id([listingId, organizationId])
+  @@map("listing_views")
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@rentix/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tipos, enums, schemas Zod e utilitários partilhados entre a API e o frontend.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --import tsx src/**/*.test.ts"
+  },
+  "dependencies": {
+    "libphonenumber-js": "^1.13.16",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.3"
+  }
+}

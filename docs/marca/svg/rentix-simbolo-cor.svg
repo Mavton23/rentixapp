@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90.0 70.6" width="360" height="282" role="img" aria-label="Rentix"><title>Rentix</title><g transform="translate(-4 -18)"><defs>
+    <linearGradient id="scorb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2F7BF5"/><stop offset="1" stop-color="#1747C4"/></linearGradient>
+    <linearGradient id="scorl" gradientUnits="userSpaceOnUse" x1="50" y1="46" x2="90" y2="86"><stop offset=".15" stop-color="#0F2A44"/><stop offset=".55" stop-color="#1D5FE6"/><stop offset="1" stop-color="#16C6C0"/></linearGradient>
+  </defs>
+  <polygon points="15,46 24,41 24,66.09 15,73.05" fill="url(#scorb)"/>
+  <polygon points="27,26 36,20 36,56.82 27,63.77" fill="url(#scorb)"/>
+  <polygon points="39,24 48,24 48,47.55 39,54.50" fill="#0F2A44"/>
+  <path d="M47 28.5H58A9.5 9.5 0 0 1 58 47.5H50" fill="none" stroke="#0F2A44" stroke-width="9"/>
+  <polygon points="6,80 50,46 50,58 13,86.6" fill="#0F2A44"/>
+  <polygon points="50,46 92,84 80,84 50,58" fill="url(#scorl)"/>
+  <path fill="#0F2A44" d="M44.5 64.5h5v5h-5zM50.5 64.5h5v5h-5zM44.5 70.5h5v5h-5zM50.5 70.5h5v5h-5z"/></g></svg>

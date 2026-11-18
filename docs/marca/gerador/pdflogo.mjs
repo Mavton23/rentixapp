@@ -1,0 +1,11 @@
+import { chromium } from 'playwright-core';
+import { readFileSync, writeFileSync } from 'node:fs';
+const svg = readFileSync('out/rentix-identidade/svg/rentix-logo-horizontal-sem-slogan-cor.svg');
+const b = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+const p = await b.newPage({ viewport: { width: 480, height: 118 } });
+await p.setContent(`<body style="margin:0"><img style="display:block;width:480px;height:118px" src="data:image/svg+xml;base64,${svg.toString('base64')}">`);
+await p.waitForTimeout(100);
+const png = await p.screenshot({ omitBackground: true });
+await b.close();
+writeFileSync(new URL('../../../apps/api/src/modules/subscriptions/rentix-logo.ts', import.meta.url), `// Logótipo do Rentix (PNG 480×118, gerado a partir de docs/marca). Usado nas faturas do Rentix.\nexport const RENTIX_LOGO_PNG = Buffer.from(\n  '${png.toString('base64')}',\n  'base64',\n);\n`);
+console.log(png.length);

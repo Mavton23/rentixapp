@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+*.log
+
+# Ambiente — nunca versionar segredos
+.env
+.env.*
+!.env.example
+
+# Uploads locais
+uploads/
+
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Ficheiros enviados em desenvolvimento
+apps/api/storage/

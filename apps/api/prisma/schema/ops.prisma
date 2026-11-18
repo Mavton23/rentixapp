@@ -1,0 +1,32 @@
+// ==================== OPERAÇÕES (fiabilidade) ====================
+
+/// Estado de cada tarefa agendada: última execução, resultado e falhas seguidas.
+model CronJob {
+  name                String    @id
+  lastStartedAt       DateTime?
+  lastFinishedAt      DateTime?
+  /// OK, FAILED ou RUNNING
+  lastStatus          String?
+  lastDurationMs      Int?
+  lastResult          Json?
+  lastError           String?
+  consecutiveFailures Int       @default(0)
+  runs                Int       @default(0)
+  updatedAt           DateTime  @updatedAt
+
+  @@map("cron_jobs")
+}
+
+/// Acontecimentos de operações vindos de fora da API (cópias de segurança, teste de reposição).
+model OpsEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  /// backup.dump, backup.restore_test, backup.files
+  kind      String
+  /// OK ou FAILED
+  status    String
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([kind, createdAt])
+  @@map("ops_events")
+}

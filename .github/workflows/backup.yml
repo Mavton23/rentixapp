@@ -1,0 +1,145 @@
+# Cópias de segurança e teste de reposição (ver docs/RUNBOOK.md).
+#
+# - Todos os dias: pg_dump da base de dados (ligação direta do Neon), cifrado, para um bucket
+#   fora do Neon. Complementa a recuperação para um momento anterior do próprio Neon.
+# - Todas as semanas: cópia dos ficheiros enviados (documentos, fotografias) para o mesmo bucket.
+# - Todos os meses: teste de reposição numa ramificação temporária do Neon.
+#
+# Cada job regista o resultado na API (página Administração → Saúde) e falha visivelmente.
+#
+# Segredos necessários (Settings → Secrets and variables → Actions):
+#   DIRECT_DATABASE_URL     ligação DIRETA do Neon (sem "-pooler")
+#   BACKUP_PASSPHRASE       frase para cifrar os dumps (guardar também fora do GitHub!)
+#   BACKUP_S3_BUCKET, BACKUP_S3_REGION, BACKUP_AWS_ACCESS_KEY_ID, BACKUP_AWS_SECRET_ACCESS_KEY
+#   BACKUP_S3_ENDPOINT      opcional (Cloudflare R2, Backblaze B2, Spaces...)
+#   UPLOADS_S3_BUCKET, UPLOADS_S3_REGION, UPLOADS_AWS_ACCESS_KEY_ID, UPLOADS_AWS_SECRET_ACCESS_KEY, UPLOADS_S3_ENDPOINT
+#   NEON_API_KEY, NEON_PROJECT_ID, NEON_BRANCH_ID
+#   OPS_REPORT_URL          https://<domínio>/api/v1/internal/ops-events
+#   OPS_TOKEN               o mesmo valor de OPS_TOKEN na API
+# Variável (vars): PG_MAJOR = versão do Postgres do projeto Neon (ex.: 17).
+
+name: Backups
+
+on:
+  schedule:
+    - cron: '30 23 * * *' # 01:30 em Maputo: cópia diária
+    - cron: '0 1 * * 0' # domingo 03:00 em Maputo: ficheiros
+    - cron: '0 2 1 * *' # dia 1, 04:00 em Maputo: teste de reposição
+  workflow_dispatch:
+    inputs:
+      job:
+        description: O que correr
+        type: choice
+        options: [dump, files, restore-test]
+        default: dump
+
+concurrency:
+  group: backups
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    if: github.event.schedule == '30 23 * * *' || inputs.job == 'dump'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PGURL: ${{ secrets.DIRECT_DATABASE_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.BACKUP_S3_REGION }}
+      ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+    steps:
+      - name: Cliente PostgreSQL ${{ vars.PG_MAJOR || '17' }}
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-${{ vars.PG_MAJOR || '17' }}
+      - name: pg_dump, verificação e cifra
+        run: |
+          set -euo pipefail
+          STAMP=$(date -u +%Y%m%d-%H%M)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          pg_dump --format=custom --no-owner --no-privileges "$PGURL" -f rentix.dump
+          # O ficheiro tem de ser legível pelo pg_restore (deteta dumps truncados).
+          pg_restore --list rentix.dump > /dev/null
+          echo "SIZE=$(stat -c %s rentix.dump)" >> "$GITHUB_ENV"
+          echo "TABLES=$(pg_restore --list rentix.dump | grep -c ' TABLE DATA ')" >> "$GITHUB_ENV"
+          gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase "${{ secrets.BACKUP_PASSPHRASE }}" -o "rentix-$STAMP.dump.gpg" rentix.dump
+          rm rentix.dump
+      - name: Enviar para o bucket de cópias
+        run: |
+          EP=${ENDPOINT:+--endpoint-url $ENDPOINT}
+          aws s3 cp $EP "rentix-$STAMP.dump.gpg" "s3://${{ secrets.BACKUP_S3_BUCKET }}/db/daily/rentix-$STAMP.dump.gpg"
+          # No dia 1, uma cópia mensal (guardada mais tempo pela regra de ciclo de vida do bucket).
+          if [ "$(date -u +%d)" = "01" ]; then
+            aws s3 cp $EP "rentix-$STAMP.dump.gpg" "s3://${{ secrets.BACKUP_S3_BUCKET }}/db/monthly/rentix-$STAMP.dump.gpg"
+          fi
+      - name: Registar resultado
+        if: always()
+        run: |
+          STATUS=$([ "${{ job.status }}" = "success" ] && echo OK || echo FAILED)
+          curl -fsS -X POST "${{ secrets.OPS_REPORT_URL }}" -H 'Content-Type: application/json' -H "x-ops-token: ${{ secrets.OPS_TOKEN }}" \
+            -d "{\"kind\":\"backup.dump\",\"status\":\"$STATUS\",\"details\":{\"file\":\"rentix-${STAMP:-}.dump.gpg\",\"bytes\":${SIZE:-0},\"tables\":${TABLES:-0},\"run\":\"$GITHUB_RUN_ID\"}}" || true
+
+  files:
+    if: github.event.schedule == '0 1 * * 0' || inputs.job == 'files'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RCLONE_CONFIG_SRC_TYPE: s3
+      RCLONE_CONFIG_SRC_PROVIDER: Other
+      RCLONE_CONFIG_SRC_ACCESS_KEY_ID: ${{ secrets.UPLOADS_AWS_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_SRC_SECRET_ACCESS_KEY: ${{ secrets.UPLOADS_AWS_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_SRC_REGION: ${{ secrets.UPLOADS_S3_REGION }}
+      RCLONE_CONFIG_SRC_ENDPOINT: ${{ secrets.UPLOADS_S3_ENDPOINT }}
+      RCLONE_CONFIG_DST_TYPE: s3
+      RCLONE_CONFIG_DST_PROVIDER: Other
+      RCLONE_CONFIG_DST_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_DST_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_DST_REGION: ${{ secrets.BACKUP_S3_REGION }}
+      RCLONE_CONFIG_DST_ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+    steps:
+      - run: curl -fsS https://rclone.org/install.sh | sudo bash
+      - name: Copiar ficheiros (os apagados ficam guardados à parte)
+        run: |
+          set -euo pipefail
+          STAMP=$(date -u +%Y%m%d)
+          rclone sync "src:${{ secrets.UPLOADS_S3_BUCKET }}" "dst:${{ secrets.BACKUP_S3_BUCKET }}/files/current" \
+            --backup-dir "dst:${{ secrets.BACKUP_S3_BUCKET }}/files/removed-$STAMP" --fast-list --transfers 16
+          rclone size --json "dst:${{ secrets.BACKUP_S3_BUCKET }}/files/current" > size.json
+          echo "COUNT=$(jq .count size.json)" >> "$GITHUB_ENV"
+          echo "BYTES=$(jq .bytes size.json)" >> "$GITHUB_ENV"
+      - name: Registar resultado
+        if: always()
+        run: |
+          STATUS=$([ "${{ job.status }}" = "success" ] && echo OK || echo FAILED)
+          curl -fsS -X POST "${{ secrets.OPS_REPORT_URL }}" -H 'Content-Type: application/json' -H "x-ops-token: ${{ secrets.OPS_TOKEN }}" \
+            -d "{\"kind\":\"backup.files\",\"status\":\"$STATUS\",\"details\":{\"files\":${COUNT:-0},\"bytes\":${BYTES:-0},\"run\":\"$GITHUB_RUN_ID\"}}" || true
+
+  restore-test:
+    if: github.event.schedule == '0 2 1 * *' || inputs.job == 'restore-test'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Só para o "prisma generate" do postinstall/build; o teste liga-se à ramificação do Neon.
+      DATABASE_URL: postgresql://build:build@localhost:5432/build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @rentix/api...
+      - run: pnpm --filter @rentix/shared build && pnpm --filter @rentix/api build
+      - name: Ramificação do Neon de há 1 hora, verificar e apagar
+        working-directory: apps/api
+        run: node dist/cli/restore-check.js --neon
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_BRANCH_ID: ${{ secrets.NEON_BRANCH_ID }}
+          DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+          OPS_REPORT_URL: ${{ secrets.OPS_REPORT_URL }}
+          OPS_TOKEN: ${{ secrets.OPS_TOKEN }}

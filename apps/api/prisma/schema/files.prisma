@@ -1,0 +1,47 @@
+// ==================== FICHEIROS ====================
+
+/// A que pertence um ficheiro (o id fica em ownerId).
+enum FileOwnerType {
+  TENANT
+  LEASE
+  PROPERTY
+  LISTING
+  BLOG_POST
+}
+
+enum FileVisibility {
+  /// Só a equipa da organização (e o inquilino, se partilhado).
+  PRIVATE
+  /// Qualquer pessoa com o endereço (fotografias de anúncios, capas do blog).
+  PUBLIC
+}
+
+/// Ficheiro guardado no armazenamento (disco local ou S3). O conteúdo nunca vai para a base de dados.
+model StoredFile {
+  id               String         @id @default(uuid()) @db.Uuid
+  /// Nulo para ficheiros da plataforma (capas do blog).
+  organizationId   String?        @db.Uuid
+  ownerType        FileOwnerType
+  ownerId          String         @db.Uuid
+  /// ID_DOCUMENT, CONTRACT, PHOTO, RECEIPT, OTHER
+  category         String
+  visibility       FileVisibility @default(PRIVATE)
+  /// O inquilino vê este ficheiro no portal (só para ficheiros do contrato ou da sua ficha).
+  sharedWithTenant Boolean        @default(false)
+  /// Caminho no armazenamento: "org/<id>/<uuid>.pdf".
+  storageKey       String         @unique
+  filename         String
+  contentType      String
+  size             Int
+  sha256           String
+  width            Int?
+  height           Int?
+  uploadedById     String?        @db.Uuid
+  createdAt        DateTime       @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, ownerType, ownerId])
+  @@index([ownerType, ownerId])
+  @@map("stored_files")
+}
